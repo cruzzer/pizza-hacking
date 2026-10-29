@@ -1,0 +1,24 @@
+# juice.${DOMAIN}: tinyauth has already authenticated the request and Traefik
+# passed the username in Remote-User. Players go to their own instance;
+# anyone else (the admin) goes to the scoreboard.
+map $http_remote_user $pizza_player {
+    "~^(player[0-9]+)$" $1;
+    default             "";
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        if ($pizza_player = "") {
+            return 302 https://ctf.${DOMAIN}${PORT_SUFFIX}/;
+        }
+        return 302 https://$pizza_player.${DOMAIN}${PORT_SUFFIX}/;
+    }
+}
