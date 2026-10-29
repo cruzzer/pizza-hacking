@@ -12,7 +12,8 @@ cd pizza-hacking
 You get:
 
 - **One Juice Shop per player**, each in its own container and network. Players
-  cannot see or touch each other's instance.
+  cannot see or touch each other's instance. The organiser gets one too, for
+  live demos without borrowing a player's shop.
 - **A login in front of everything** ([tinyauth](https://github.com/tinyauthapp/tinyauth)).
   Every player gets an account that opens only *their* Juice Shop.
 - **A scoreboard** ([CTFd](https://ctfd.io)) preloaded with every Juice Shop
@@ -26,10 +27,10 @@ The first run generates every password, prints them, and stores them in `.env`:
 ```
 ================ Pizza Hacking ================
 Scoreboard (CTFd):   https://ctf.127.0.0.1.nip.io/
-Your Juice Shop:     https://juice.127.0.0.1.nip.io/   (redirects each player)
+Your Juice Shop:     https://juice.127.0.0.1.nip.io/   (sends everyone to their own)
 
 IdP login (tinyauth, needed for every page):
-  admin      Xq3...                 (organiser: can open every instance)
+  admin      Xq3...                 https://admin.127.0.0.1.nip.io/   (organiser: own demo shop, can open every instance)
   player1    k8T...                 https://player1.127.0.0.1.nip.io/
   player2    Pw2...                 https://player2.127.0.0.1.nip.io/
 
@@ -44,7 +45,8 @@ Hand each player a `playerN` login. That's it.
 - Docker with the compose plugin (Docker Engine 24+ or Docker Desktop). Rootless
   Podman with its Docker API socket works too.
 - `bash`. Every other tool (openssl, bcrypt, the importer) runs in a container.
-- Memory: roughly 1 GB for the base stack plus ~300 MB per player.
+- Memory: roughly 1 GB for the base stack plus ~300 MB per Juice Shop (one per
+  player, plus the organiser's).
 
 ## How it works
 
@@ -52,17 +54,19 @@ Hand each player a `playerN` login. That's it.
                     ┌──────────── Traefik :443 (self-signed CA) ────────────┐
  browser ──────────▶│ auth.D    → tinyauth (login page)                     │
                     │ ctf.D     → [tinyauth] → CTFd ── MariaDB, Redis       │
-                    │ juice.D   → [tinyauth] → redirect to your playerN.D   │
+                    │ juice.D   → [tinyauth] → redirect to your own shop    │
+                    │ admin.D   → [tinyauth: admin only]                    │
                     │ playerN.D → [tinyauth: playerN + admin only]          │
                     └─────────────────────┬─────────────────────────────────┘
-                                          │ one internal network per player
-                         juice-player1   juice-player2   …   juice-playerN
+                                          │ one internal network per shop
+                juice-admin   juice-player1   juice-player2   …   juice-playerN
 ```
 
 - `D` is `DOMAIN` (default `127.0.0.1.nip.io`). Every hostname is a single
   label under it, so one wildcard certificate covers them all.
 - tinyauth runs with a **default-deny** ACL policy. Each `playerN` host admits
-  exactly `playerN` and the organiser.
+  exactly `playerN` and the organiser; the organiser's own `admin` host (named
+  after `TINYAUTH_ADMIN_USER`) admits only the organiser.
 - Each Juice Shop runs on an **internal** network that only Traefik joins. It has
   no internet access and no route to CTFd, tinyauth or other players, so a
   player who gets SSRF or RCE in their shop is still boxed in.
@@ -85,7 +89,7 @@ CTFd (accounts, solves, points) lives in Docker volumes and survives
 | `./pizza.sh up [--players N]` | Start. First run generates credentials, CA and certs. Re-run with another N to add or remove players; existing passwords never change. |
 | `./pizza.sh creds` | Print all logins again (they also live in `.env`). |
 | `./pizza.sh status` / `logs [svc]` | `docker compose ps` / follow logs. |
-| `./pizza.sh reset-juice` | Give every player a fresh Juice Shop. |
+| `./pizza.sh reset-juice` | Give every player (and the organiser) a fresh Juice Shop. |
 | `./pizza.sh down` | Stop. CTFd data is kept. |
 | `./pizza.sh down --wipe` | Stop and delete everything: CTFd data, `.env`, certificates. |
 | `./pizza.sh test` | Run the end-to-end tests in a separate throwaway stack. |

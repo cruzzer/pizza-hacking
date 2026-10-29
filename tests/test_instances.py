@@ -48,3 +48,22 @@ def test_landing_sends_player_to_own_instance(login, url):
 def test_landing_ignores_spoofed_remote_user(login, url):
     resp = login("player1").get(url("juice"), headers={"Remote-User": "player2"}, allow_redirects=False, timeout=30)
     assert resp.headers["Location"].startswith("https://player1.")
+
+
+@pytest.mark.stage1
+@pytest.mark.stage2
+def test_admin_has_own_instance(login, url, env):
+    admin = env["TINYAUTH_ADMIN_USER"]
+    s = login(admin)
+    assert is_juice_shop(s.get(url(admin), timeout=30))
+    # juice.<domain> sends the organiser to their own demo shop.
+    resp = s.get(url("juice"), allow_redirects=False, timeout=30)
+    assert resp.status_code == 302
+    assert resp.headers["Location"].startswith(f"https://{admin}.")
+
+
+@pytest.mark.stage1
+@pytest.mark.stage2
+def test_players_cannot_open_admin_instance(login, url, env):
+    resp = login("player1").get(url(env["TINYAUTH_ADMIN_USER"]), allow_redirects=False, timeout=30)
+    assert resp.status_code == 403

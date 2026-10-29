@@ -4,9 +4,9 @@
 # on top of this file:
 #   .env                                  every generated credential
 #   certs/                                local CA + wildcard certificate
-#   generated/docker-compose.players.yml  one Juice Shop per player, each on
-#                                         its own internal network that only
-#                                         Traefik joins
+#   generated/docker-compose.players.yml  one Juice Shop per player and one
+#                                         for the organiser, each on its own
+#                                         internal network only Traefik joins
 #   generated/traefik/dynamic.yml         routers, forward-auth, TLS
 #   generated/tinyauth/{config.yml,users} accounts + per-host ACLs (deny)
 #   generated/challenges-meta.json        hints exported from Juice Shop
@@ -51,6 +51,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       PORT_SUFFIX: ${PORT_SUFFIX:-}
+      ADMIN_USER: ${TINYAUTH_ADMIN_USER}
     volumes:
       - ./landing/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     networks:
@@ -111,7 +112,7 @@ services:
     command: python -I /bootstrap/ctfd_import.py
     environment:
       CTFD_URL: http://ctfd:8000
-      JUICE_URL: http://juice-player1:3000
+      JUICE_URL: http://juice-${TINYAUTH_ADMIN_USER}:3000
       CTF_KEY: ${CTF_KEY}
       CTF_NAME: ${CTF_NAME:-Pizza Hacking}
       CTFD_ADMIN_USER: ${CTFD_ADMIN_USER}
