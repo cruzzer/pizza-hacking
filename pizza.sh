@@ -11,7 +11,8 @@
 #
 # Only bash and docker (with the compose plugin) are needed on the host; every
 # helper runs in a container. Settings for the first run can be passed as
-# environment variables: DOMAIN, HTTP_PORT, HTTPS_PORT, CTF_NAME.
+# environment variables: DOMAIN, HTTP_PORT (or "off"), HTTPS_PORT, PUBLIC_PORT,
+# CTF_NAME. PIZZA_COMPOSE_OVERRIDE=/path/file.yml adds your own compose file.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +61,11 @@ env_put() {
 compose() {
   local files=(-f "$REPO_DIR/docker-compose.yml")
   [[ -f "$GEN_DIR/docker-compose.players.yml" ]] && files+=(-f "$GEN_DIR/docker-compose.players.yml")
+  # Site-specific additions (labels, extra networks, ...), applied last.
+  if [[ -n "${PIZZA_COMPOSE_OVERRIDE:-}" ]]; then
+    [[ -f "$PIZZA_COMPOSE_OVERRIDE" ]] || die "PIZZA_COMPOSE_OVERRIDE: no such file: $PIZZA_COMPOSE_OVERRIDE"
+    files+=(-f "$PIZZA_COMPOSE_OVERRIDE")
+  fi
   PIZZA_STATE_DIR="$STATE_DIR" docker compose -p "$PROJECT" --project-directory "$REPO_DIR" \
     --env-file "$ENV_FILE" "${files[@]}" "$@"
 }
@@ -93,6 +99,9 @@ EOF
   env_default DOMAIN "${DOMAIN:-127.0.0.1.nip.io}"
   env_default HTTP_PORT "${HTTP_PORT:-80}"
   env_default HTTPS_PORT "${HTTPS_PORT:-443}"
+  # The port players type in their browser. Differs from HTTPS_PORT only when
+  # another reverse proxy in front of this stack terminates TLS.
+  env_default PUBLIC_PORT "${PUBLIC_PORT:-$(env_get HTTPS_PORT)}"
   env_default CTF_NAME "${CTF_NAME:-Pizza Hacking}"
   env_default PLAYERS 1
 
@@ -126,11 +135,15 @@ load_env() {
   DOMAIN="$(env_get DOMAIN)"
   HTTP_PORT="$(env_get HTTP_PORT)"
   HTTPS_PORT="$(env_get HTTPS_PORT)"
+  PUBLIC_PORT="$(env_get PUBLIC_PORT)"
+  PUBLIC_PORT="${PUBLIC_PORT:-$HTTPS_PORT}"
   PLAYERS="$(env_get PLAYERS)"
   PORT_SUFFIX=""
-  [[ "$HTTPS_PORT" == "443" ]] || PORT_SUFFIX=":$HTTPS_PORT"
+  [[ "$PUBLIC_PORT" == "443" ]] || PORT_SUFFIX=":$PUBLIC_PORT"
   env_put PORT_SUFFIX "$PORT_SUFFIX"
   [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || die "DOMAIN '$DOMAIN' is not a valid lowercase hostname"
+  [[ "$HTTPS_PORT" =~ ^[0-9]+$ && "$PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "HTTPS_PORT and PUBLIC_PORT must be port numbers"
+  [[ "$HTTP_PORT" =~ ^[0-9]+$ || "$HTTP_PORT" == "off" ]] || die "HTTP_PORT must be a port number or 'off'"
   [[ "$PLAYERS" =~ ^[0-9]+$ && "$PLAYERS" -ge 1 ]] || die "PLAYERS must be a positive number"
 }
 
@@ -222,17 +235,27 @@ $apps  ctf:
 EOF
 }
 
+# One router per host on the TLS entrypoint, plus a twin on the plain-HTTP
+# "proxy" entrypoint for a reverse proxy that terminates TLS in front of us.
+router() {
+  local name="$1" host="$2" service="$3" mw="$4"
+  printf '    %s:\n      rule: Host(`%s`)\n      entryPoints: [websecure]\n' "$name" "$host"
+  [[ -n "$mw" ]] && printf '      middlewares: [%s]\n' "$mw"
+  printf '      service: %s\n      tls: {}\n' "$service"
+  printf '    %s-proxied:\n      rule: Host(`%s`)\n      entryPoints: [proxy]\n' "$name" "$host"
+  printf '      middlewares: [proxied-https%s]\n' "${mw:+, $mw-proxied}"
+  printf '      service: %s\n' "$service"
+}
+
 gen_traefik() {
-  local i routers="" services="" aliases=""
+  local i routers services=""
   mkdir -p "$GEN_DIR/traefik"
+  routers="$(router auth "auth.$DOMAIN" tinyauth "")
+$(router ctf "ctf.$DOMAIN" ctfd sso)
+$(router juice "juice.$DOMAIN" landing sso)"
   for ((i = 1; i <= PLAYERS; i++)); do
     routers+="
-    player$i:
-      rule: Host(\`player$i.$DOMAIN\`)
-      entryPoints: [websecure]
-      middlewares: [sso]
-      service: player$i
-      tls: {}"
+$(router "player$i" "player$i.$DOMAIN" "player$i" sso)"
     services+="
     player$i:
       loadBalancer:
@@ -248,32 +271,32 @@ http:
       entryPoints: [web]
       middlewares: [to-https]
       service: noop@internal
-    auth:
-      rule: Host(\`auth.$DOMAIN\`)
-      entryPoints: [websecure]
-      service: tinyauth
-      tls: {}
-    ctf:
-      rule: Host(\`ctf.$DOMAIN\`)
-      entryPoints: [websecure]
-      middlewares: [sso]
-      service: ctfd
-      tls: {}
-    juice:
-      rule: Host(\`juice.$DOMAIN\`)
-      entryPoints: [websecure]
-      middlewares: [sso]
-      service: landing
-      tls: {}$routers
+$routers
 
   middlewares:
     sso:
       forwardAuth:
         address: http://tinyauth:3000/api/auth/traefik
+        authResponseHeaders: [Remote-User, Remote-Name, Remote-Email]
         # Never pass client-supplied X-Forwarded-* to tinyauth.
         trustForwardHeader: false
         maxResponseBodySize: 1048576
+    # Same gate for the proxy entrypoint. Trusting X-Forwarded-* is safe here:
+    # the entrypoint drops any the client sent (no trusted IPs configured) and
+    # proxied-https sets Proto/Port, so tinyauth builds https:// redirects.
+    sso-proxied:
+      forwardAuth:
+        address: http://tinyauth:3000/api/auth/traefik
         authResponseHeaders: [Remote-User, Remote-Name, Remote-Email]
+        trustForwardHeader: true
+        maxResponseBodySize: 1048576
+    # The proxy entrypoint is only reached through a TLS-terminating proxy,
+    # so tell the apps the request was HTTPS on the public port.
+    proxied-https:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: https
+          X-Forwarded-Port: "$PUBLIC_PORT"
     to-https:
       redirectRegex:
         regex: ^http://([^/:]+)(:[0-9]+)?(.*)
@@ -329,6 +352,10 @@ gen_players_compose() {
       CTF_KEY: \${CTF_KEY}
     networks: [player$i]"
   done
+  local ports="
+      - \"$HTTPS_PORT:443\""
+  [[ "$HTTP_PORT" == "off" ]] || ports+="
+      - \"$HTTP_PORT:80\""
   cat >"$GEN_DIR/docker-compose.players.yml" <<EOF
 # Generated by pizza.sh — edit pizza.sh, not this file.
 # Each Juice Shop sits on its own internal network: no internet, and no route
@@ -337,6 +364,7 @@ gen_players_compose() {
 # public hostname through Traefik.
 services:
   traefik:
+    ports:$ports
     networks:
       edge:
         aliases:
@@ -456,6 +484,7 @@ cmd_test() {
   export PIZZA_STATE_DIR="${PIZZA_TEST_STATE_DIR:-$REPO_DIR/.test-state}"
   export HTTP_PORT="${TEST_HTTP_PORT:-18080}" HTTPS_PORT="${TEST_HTTPS_PORT:-18443}"
   export DOMAIN="${TEST_DOMAIN:-pizza.test}"
+  unset PUBLIC_PORT PIZZA_COMPOSE_OVERRIDE
   local self="$REPO_DIR/pizza.sh" rc=0
   [[ -e "$PIZZA_STATE_DIR/.env" ]] && die "$PIZZA_STATE_DIR already exists — remove it or run ./pizza.sh test-clean"
   # shellcheck disable=SC2064  # expand now: the locals are gone when it fires
@@ -493,7 +522,7 @@ main() {
     reset-juice) cmd_reset_juice ;;
     test) cmd_test "$@" ;;
     test-clean) cmd_test_clean ;;
-    help|-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command '$cmd' (try ./pizza.sh help)" ;;
   esac
 }

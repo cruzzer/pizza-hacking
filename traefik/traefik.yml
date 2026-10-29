@@ -7,6 +7,11 @@ entryPoints:
     address: ":443"
     http:
       tls: {}
+  # Plain HTTP and never published: for a reverse proxy in front of this
+  # stack that terminates TLS itself (README, "Behind your own reverse
+  # proxy"). Same routers, same tinyauth gate.
+  proxy:
+    address: ":8000"
 
 providers:
   file:

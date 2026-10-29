@@ -108,11 +108,32 @@ Settings for the first run, all optional:
 | Variable | Default | |
 |---|---|---|
 | `DOMAIN` | `127.0.0.1.nip.io` | Base hostname. |
-| `HTTPS_PORT` / `HTTP_PORT` | `443` / `80` | Published ports. HTTP only redirects. |
+| `HTTPS_PORT` | `443` | Published HTTPS port. |
+| `HTTP_PORT` | `80` | Published HTTP port (it only redirects). `off` publishes none. |
+| `PUBLIC_PORT` | `HTTPS_PORT` | The port players see in links. Only set it behind another proxy, see below. |
 | `CTF_NAME` | `Pizza Hacking` | Shown in CTFd and on the login page. |
 
 They are written into `.env` and reused afterwards. To change one later, edit
 `.env`, delete `certs/` if you changed `DOMAIN`, and run `./pizza.sh up` again.
+
+## Behind your own reverse proxy
+
+If the host already runs a reverse proxy on 443 (with a real certificate),
+pizza-hacking can sit behind it. Its Traefik has a third entrypoint, `proxy`
+(plain HTTP on container port 8000, never published). It carries the same
+routers and the same tinyauth gate, and it tells the apps the request was
+HTTPS. Your proxy terminates TLS for `DOMAIN` and `*.DOMAIN` and forwards
+everything to `traefik:8000`, keeping the `Host` header:
+
+```bash
+DOMAIN=pizza.example.org HTTPS_PORT=8443 HTTP_PORT=off PUBLIC_PORT=443 \
+PIZZA_COMPOSE_OVERRIDE=/path/to/my-override.yml ./pizza.sh up --players 10
+```
+
+`PIZZA_COMPOSE_OVERRIDE` is an extra compose file applied last. Use it to attach
+the `traefik` service to your proxy's network and add the labels your proxy
+reads. Don't add your proxy's own login in front: tinyauth already gates every
+host, and a second login breaks the redirects.
 
 **Certificates.** The stack uses its own CA (`certs/ca.crt`). Either import that
 file into the browsers as a trusted authority, or click through the warning once
@@ -154,6 +175,10 @@ The stack is always torn down at the end.
      registered on instance 1 does not exist on instance 2 (independent).
    - CTFd still has the stage-1 player and their points.
    - No credential in `.env` was rotated.
+
+Both stages also check the `proxy` entrypoint: it is gated, it serves a
+logged-in player, and it keeps the per-player ACLs. `TEST_HTTP_PORT=off
+./pizza.sh test` runs the suite without a published HTTP port.
 
 Pass extra pytest arguments through, e.g. `./pizza.sh test -k flag -x`.
 
