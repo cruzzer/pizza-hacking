@@ -407,6 +407,31 @@ export_meta() {
   mv "$GEN_DIR/challenges-meta.json.tmp" "$GEN_DIR/challenges-meta.json"
 }
 
+# tinyauth reads its users and ACLs only at startup, and `compose up` does not
+# recreate it when just the mounted files change. Recreate it whenever they
+# do (Traefik's file provider reloads by itself). The users file is re-hashed
+# with fresh salts on every run, so fingerprint its inputs instead: the
+# config plus every user's password. Kept in the private generated/ dir.
+tinyauth_fingerprint() {
+  {
+    cat "$GEN_DIR/tinyauth/config.yml"
+    printf '%s %s\n' "$ADMIN" "$(env_get TINYAUTH_ADMIN_PASSWORD)"
+    local i
+    for ((i = 1; i <= PLAYERS; i++)); do
+      printf 'player%s %s\n' "$i" "$(env_get "PLAYER${i}_PASSWORD")"
+    done
+  } | cksum
+}
+
+reload_tinyauth() {
+  local now applied="$GEN_DIR/.tinyauth-applied"
+  now="$(tinyauth_fingerprint)"
+  [[ -f "$applied" && "$(cat "$applied")" == "$now" ]] && return 0
+  info "Reloading tinyauth with the current users and ACLs"
+  compose up -d --no-deps --force-recreate tinyauth
+  printf '%s\n' "$now" >"$applied"
+}
+
 generate() {
   mkdir -p "$GEN_DIR"
   chmod 700 "$GEN_DIR"
@@ -463,6 +488,7 @@ cmd_up() {
   # --remove-orphans drops instances of players removed by a lower --players.
   # It is scoped to this compose project (-p) only.
   compose up -d --remove-orphans
+  reload_tinyauth
   info "Setting up CTFd and importing challenges (first run takes a minute)"
   compose --profile tools run --rm ctfd-bootstrap
   if [[ "$FIRST_RUN" -eq 1 ]]; then
@@ -512,8 +538,10 @@ cmd_test() {
   cp "$ENV_FILE" "$PIZZA_STATE_DIR/env.stage1"
   compose --profile test run --rm tests -m "stage1" "$@" || rc=$?
 
-  info "[test] stage 2: stop, then start again with two players"
+  info "[test] stage 2: stop, start again, then add a second player to the running stack"
   "$self" down >/dev/null
+  "$self" up --players 1 >/dev/null
+  # Adding a player live is the path where tinyauth must reload its config.
   "$self" up --players 2 >/dev/null
   compose --profile test run --rm -e PIZZA_STAGE1_ENV=/state/env.stage1 tests -m "stage2" "$@" || rc=$?
   return "$rc"
