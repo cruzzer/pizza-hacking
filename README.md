@@ -116,6 +116,7 @@ Settings for the first run, all optional:
 | `HTTP_PORT` | `80` | Published HTTP port (it only redirects). `off` publishes none. |
 | `PUBLIC_PORT` | `HTTPS_PORT` | The port players see in links. Only set it behind another proxy, see below. |
 | `CTF_NAME` | `Pizza Hacking` | Shown in CTFd and on the login page. |
+| `JUICE_THEME` | `deeporange-indigo` | Juice Shop colours. Light: `blue-lightblue`, `deeppurple-amber`, `indigo-pink`, `deeporange-indigo`. Dark: `bluegrey-lightgreen`, `pink-bluegrey`, `purple-green`, `lime-green`, `neon-fire` (Juice Shop's own CTF default). |
 
 They are written into `.env` and reused afterwards. To change one later, edit
 `.env`, delete `certs/` if you changed `DOMAIN`, and run `./pizza.sh up` again.

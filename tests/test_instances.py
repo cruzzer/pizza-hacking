@@ -37,6 +37,15 @@ def test_admin_can_open_every_instance(login, url, env):
 
 
 @pytest.mark.stage1
+def test_juice_shop_uses_configured_theme(login, url, env):
+    resp = login("player1").get(url("player1", "/rest/admin/application-configuration"), timeout=30)
+    config = resp.json()["config"]
+    assert config["application"]["theme"] == env["JUICE_THEME"]
+    # The theme override must not drop the CTF settings from NODE_ENV=ctf.
+    assert config["ctf"]["showFlagsInNotifications"] is True
+
+
+@pytest.mark.stage1
 @pytest.mark.stage2
 def test_landing_sends_player_to_own_instance(login, url):
     resp = login("player1").get(url("juice"), allow_redirects=False, timeout=30)

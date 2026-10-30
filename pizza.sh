@@ -12,7 +12,7 @@
 # Only bash and docker (with the compose plugin) are needed on the host; every
 # helper runs in a container. Settings for the first run can be passed as
 # environment variables: DOMAIN, HTTP_PORT (or "off"), HTTPS_PORT, PUBLIC_PORT,
-# CTF_NAME. PIZZA_COMPOSE_OVERRIDE=/path/file.yml adds your own compose file.
+# CTF_NAME, JUICE_THEME. PIZZA_COMPOSE_OVERRIDE=/path/file.yml adds your own compose file.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,6 +103,8 @@ EOF
   # another reverse proxy in front of this stack terminates TLS.
   env_default PUBLIC_PORT "${PUBLIC_PORT:-$(env_get HTTPS_PORT)}"
   env_default CTF_NAME "${CTF_NAME:-Pizza Hacking}"
+  # Juice Shop's CTF mode defaults to the black neon-fire theme; this one is light.
+  env_default JUICE_THEME "${JUICE_THEME:-deeporange-indigo}"
   env_default PLAYERS 1
 
   # tinyauth (IdP) administrator — sees every player instance and CTFd.
@@ -145,6 +147,10 @@ load_env() {
   [[ "$HTTPS_PORT" =~ ^[0-9]+$ && "$PUBLIC_PORT" =~ ^[0-9]+$ ]] || die "HTTPS_PORT and PUBLIC_PORT must be port numbers"
   [[ "$HTTP_PORT" =~ ^[0-9]+$ || "$HTTP_PORT" == "off" ]] || die "HTTP_PORT must be a port number or 'off'"
   [[ "$PLAYERS" =~ ^[0-9]+$ && "$PLAYERS" -ge 1 ]] || die "PLAYERS must be a positive number"
+  # Light: blue-lightblue deeppurple-amber indigo-pink deeporange-indigo.
+  # Dark: bluegrey-lightgreen pink-bluegrey purple-green lime-green neon-fire.
+  [[ "$(env_get JUICE_THEME)" =~ ^(blue-lightblue|deeppurple-amber|indigo-pink|deeporange-indigo|bluegrey-lightgreen|pink-bluegrey|purple-green|lime-green|neon-fire)$ ]] ||
+    die "JUICE_THEME '$(env_get JUICE_THEME)' is not a Juice Shop theme"
   ADMIN="$(env_get TINYAUTH_ADMIN_USER)"
   # The organiser's name is also a hostname, a tinyauth app id (no "_") and a
   # compose service suffix, and must not shadow another host.
@@ -364,6 +370,7 @@ gen_players_compose() {
     environment:
       NODE_ENV: ctf
       CTF_KEY: \${CTF_KEY}
+      NODE_CONFIG: '{\"application\":{\"theme\":\"\${JUICE_THEME}\"}}'
     networks: [$owner]"
   done
   local ports="
