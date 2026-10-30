@@ -12,7 +12,7 @@
 # Only bash and docker (with the compose plugin) are needed on the host; every
 # helper runs in a container. Settings for the first run can be passed as
 # environment variables: DOMAIN, HTTP_PORT (or "off"), HTTPS_PORT, PUBLIC_PORT,
-# CTF_NAME, JUICE_THEME. PIZZA_COMPOSE_OVERRIDE=/path/file.yml adds your own compose file.
+# CTF_NAME, JUICE_THEME (applied on every run). PIZZA_COMPOSE_OVERRIDE=/path/file.yml adds your own compose file.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,8 +103,13 @@ EOF
   # another reverse proxy in front of this stack terminates TLS.
   env_default PUBLIC_PORT "${PUBLIC_PORT:-$(env_get HTTPS_PORT)}"
   env_default CTF_NAME "${CTF_NAME:-Pizza Hacking}"
-  # Juice Shop's CTF mode defaults to the black neon-fire theme; this one is light.
-  env_default JUICE_THEME "${JUICE_THEME:-deeporange-indigo}"
+  # Juice Shop's CTF mode defaults to the black neon-fire theme; this one is
+  # light. Cosmetic, so unlike the settings above an explicit value always wins.
+  if [[ -n "${JUICE_THEME:-}" ]]; then
+    env_put JUICE_THEME "$JUICE_THEME"
+  else
+    env_default JUICE_THEME blue-lightblue
+  fi
   env_default PLAYERS 1
 
   # tinyauth (IdP) administrator — sees every player instance and CTFd.
