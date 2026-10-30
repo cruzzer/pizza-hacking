@@ -103,12 +103,13 @@ EOF
   # another reverse proxy in front of this stack terminates TLS.
   env_default PUBLIC_PORT "${PUBLIC_PORT:-$(env_get HTTPS_PORT)}"
   env_default CTF_NAME "${CTF_NAME:-Pizza Hacking}"
-  # Juice Shop's CTF mode defaults to the black neon-fire theme; this one is
-  # light. Cosmetic, so unlike the settings above an explicit value always wins.
+  # Juice Shop's CTF mode switches to the black-and-pink neon-fire theme; keep
+  # its standard look instead. Cosmetic, so unlike the settings above an
+  # explicit value always wins.
   if [[ -n "${JUICE_THEME:-}" ]]; then
     env_put JUICE_THEME "$JUICE_THEME"
   else
-    env_default JUICE_THEME blue-lightblue
+    env_default JUICE_THEME bluegrey-lightgreen
   fi
   env_default PLAYERS 1
 
